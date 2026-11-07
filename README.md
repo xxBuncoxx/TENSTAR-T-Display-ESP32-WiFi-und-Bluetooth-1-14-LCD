@@ -43,10 +43,10 @@ ________________________________________
 3. Benötigte Bibliotheken installieren
 Gehe zu Sketch → Bibliothek einbinden → Bibliotheken verwalten und installiere folgende Bibliotheken:
 
-Adafruit ST7789
-Adafruit GFX
-ArduinoJson
-WiFiManager (by tzapu)
+- Adafruit ST7789
+- Adafruit GFX
+- ArduinoJson
+- WiFiManager (by tzapu)
 ________________________________________
 
 4. Board einstellen
