@@ -1,0 +1,861 @@
+#include <SPI.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
+#include <time.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
+
+// Preferences for storing credentials
+Preferences preferences;
+
+// Credential storage (loaded from Preferences)
+String storedDexcomUsername = "";
+String storedDexcomPassword = "";
+
+// Reset button pin (hold during boot to reset config)
+#define RESET_CONFIG_PIN 0  // GPIO0 - BOOT button
+
+// TENSTAR / TTGO T-Display Pins
+#define TFT_MOSI 19
+#define TFT_SCLK 18
+#define TFT_CS   5
+#define TFT_DC   16
+#define TFT_RST  23
+#define TFT_BL   4
+
+// Initialize Display
+Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+
+// Dexcom region (loaded from Preferences)
+String storedDexcomRegion = "us";
+
+// Dexcom Share API endpoints
+String dexcomAuthenticateURL;
+String dexcomLoginURL;
+String dexcomDataURL;
+
+void updateDexcomURLs()
+{
+    String host;
+    if (storedDexcomRegion == "ous")
+        host = "shareous1.dexcom.com";
+    else if (storedDexcomRegion == "jp")
+        host = "share.dexcom.jp";
+    else
+        host = "share2.dexcom.com";
+
+    String base = "https://" + host + "/ShareWebServices/Services/";
+    dexcomAuthenticateURL = base + "General/AuthenticatePublisherAccount";
+    dexcomLoginURL = base + "General/LoginPublisherAccountById";
+    dexcomDataURL = base + "Publisher/ReadPublisherLatestGlucoseValues";
+}
+
+const char *applicationId = "d8665ade-9673-4e27-9ff6-92db4ce13d13";
+String accountId = "";
+String sessionId = "";
+float current_glucose_mgdl = 0;
+float previous_glucose_mgdl = 0;
+float glucose_diff = 0;
+bool validDiff = false;
+float glucose_mmol = 0;
+String trend = "Stable";
+String timestamp = "N/A";
+unsigned long sessionStartMs = 0;
+const unsigned long SESSION_REFRESH_MS = 23UL * 60UL * 60UL * 1000UL;
+
+// NTP
+const char *ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 0;
+const int daylightOffset_sec = 0;
+bool ntpSynced = false;
+
+// Adaptive polling
+time_t lastReadingTimestamp = 0;
+const int READING_INTERVAL_SEC = 300;
+const int FETCH_BUFFER_SEC = 15;
+const unsigned long MIN_FETCH_INTERVAL_MS = 30000;
+
+// Historical readings for graph
+const int GRAPH_POINTS = 120;
+float graphReadings[GRAPH_POINTS];
+time_t graphTimestamps[GRAPH_POINTS];
+int graphCount = 0;
+
+// Trend direction mapping
+const char *DEXCOM_TREND_DIRECTIONS[] = {
+    "None", "DoubleUp", "SingleUp", "FortyFiveUp", "Flat",
+    "FortyFiveDown", "SingleDown", "DoubleDown", "NotComputable", "RateOutOfRange"
+};
+
+const char *DEXCOM_TREND_ARROWS[] = {
+    "", "\x18\x18", "\x18", "\x1E", "\x1A",
+    "\x1F", "\x19", "\x19\x19", "?", "-"
+};
+
+// ==================== CREDENTIALS ====================
+void loadCredentials()
+{
+    preferences.begin("dexcom", true);
+    storedDexcomUsername = preferences.getString("username", "");
+    storedDexcomPassword = preferences.getString("password", "");
+    storedDexcomRegion = preferences.getString("region", "us");
+    preferences.end();
+    updateDexcomURLs();
+    Serial.println("Loaded credentials from storage");
+}
+
+void saveCredentials(const char *username, const char *password, const char *region)
+{
+    String regionStr = String(region);
+    if (regionStr != "ous" && regionStr != "jp")
+        regionStr = "us";
+
+    preferences.begin("dexcom", false);
+    preferences.putString("username", username);
+    preferences.putString("password", password);
+    preferences.putString("region", regionStr);
+    preferences.end();
+
+    storedDexcomUsername = String(username);
+    storedDexcomPassword = String(password);
+    storedDexcomRegion = regionStr;
+    updateDexcomURLs();
+    Serial.println("Credentials saved");
+}
+
+void clearCredentials()
+{
+    preferences.begin("dexcom", false);
+    preferences.clear();
+    preferences.end();
+    storedDexcomUsername = "";
+    storedDexcomPassword = "";
+    storedDexcomRegion = "us";
+    updateDexcomURLs();
+    Serial.println("Credentials cleared");
+}
+
+// ==================== DISPLAY HELPERS ====================
+void displayConfigPortalStatus(const char *ssid)
+{
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_YELLOW);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.print("WiFi Setup");
+
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(1);
+    tft.setCursor(10, 40);
+    tft.print("Connect to:");
+    tft.setTextColor(ST77XX_CYAN);
+    tft.setCursor(10, 55);
+    tft.print(ssid);
+
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(10, 80);
+    tft.print("Browser:");
+    tft.setTextColor(ST77XX_GREEN);
+    tft.setCursor(10, 95);
+    tft.print("192.168.4.1");
+}
+
+// ==================== SETUP ====================
+void setup()
+{
+    Serial.begin(115200);
+
+    pinMode(RESET_CONFIG_PIN, INPUT_PULLUP);
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);  // Backlight on
+
+    // SPI + Display init
+    SPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
+    tft.init(135, 240);
+    tft.setRotation(1);          // Landscape 240x135
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(20, 40);
+    tft.print("Glucose Monitor");
+
+    bool resetConfig = (digitalRead(RESET_CONFIG_PIN) == LOW);
+    if (resetConfig)
+    {
+        Serial.println("Reset button held - clearing credentials");
+        tft.setCursor(10, 80);
+        tft.setTextColor(ST77XX_RED);
+        tft.print("Resetting...");
+        clearCredentials();
+        delay(1000);
+    }
+
+    loadCredentials();
+
+    WiFiManager wm;
+    wm.setConnectTimeout(30);
+
+    WiFiManagerParameter dexcom_user("dexcom_user", "Dexcom Username", storedDexcomUsername.c_str(), 64);
+    WiFiManagerParameter dexcom_pass("dexcom_pass", "Dexcom Password", storedDexcomPassword.c_str(), 64);
+
+    static const char REGION_SELECT_HTML[] =
+        "<br/><label for='region_ui'>Dexcom Region</label><br/>"
+        "<select id='region_ui' onchange=\"document.getElementById('dexcom_region').value=this.value;\">"
+        "<option value='us'>United States</option>"
+        "<option value='ous'>Outside US / Worldwide</option>"
+        "<option value='jp'>Japan</option>"
+        "</select>"
+        "<script>window.addEventListener('load',function(){"
+        "var h=document.getElementById('dexcom_region');var s=document.getElementById('region_ui');"
+        "if(h&&s){s.value=(h.value||'us');}});</script>";
+
+    WiFiManagerParameter dexcom_region("dexcom_region", "", storedDexcomRegion.c_str(), 5, " type='hidden'");
+    WiFiManagerParameter region_select(REGION_SELECT_HTML);
+
+    wm.addParameter(&dexcom_user);
+    wm.addParameter(&dexcom_pass);
+    wm.addParameter(&dexcom_region);
+    wm.addParameter(&region_select);
+
+    wm.setSaveParamsCallback([&dexcom_user, &dexcom_pass, &dexcom_region]()
+                             { saveCredentials(dexcom_user.getValue(), dexcom_pass.getValue(), dexcom_region.getValue()); });
+
+    const char *apName = "DexcomMonitor-Setup";
+    wm.setConfigPortalTimeout(120);
+
+    wm.setAPCallback([](WiFiManager *wm)
+                     {
+                         tft.init(135, 240);
+                         tft.setRotation(1);
+                         displayConfigPortalStatus(wm->getConfigPortalSSID().c_str());
+                     });
+
+    bool connected;
+    if (resetConfig || storedDexcomUsername.length() == 0)
+    {
+        tft.fillScreen(ST77XX_BLACK);
+        tft.setTextColor(ST77XX_WHITE);
+        tft.setTextSize(2);
+        tft.setCursor(15, 10);
+        tft.print("Welcome!");
+        tft.setTextSize(1);
+        tft.setCursor(10, 45);
+        tft.print("Connect to WiFi:");
+        tft.setTextColor(ST77XX_YELLOW);
+        tft.setCursor(10, 60);
+        tft.print(apName);
+        tft.setTextColor(ST77XX_WHITE);
+        tft.setCursor(10, 85);
+        tft.print("Open browser:");
+        tft.setTextColor(ST77XX_GREEN);
+        tft.setCursor(10, 100);
+        tft.print("192.168.4.1");
+
+        connected = wm.startConfigPortal(apName);
+    }
+    else
+    {
+        tft.setCursor(20, 80);
+        tft.print("Connecting...");
+        connected = wm.autoConnect(apName);
+    }
+
+    // Re-init display after WiFiManager
+    tft.init(135, 240);
+    tft.setRotation(1);
+
+    if (!connected)
+    {
+        Serial.println("WiFi failed");
+        tft.fillScreen(ST77XX_BLACK);
+        tft.setTextColor(ST77XX_RED);
+        tft.setTextSize(2);
+        tft.setCursor(20, 30);
+        tft.print("WiFi Failed!");
+        tft.setTextColor(ST77XX_WHITE);
+        tft.setTextSize(1);
+        tft.setCursor(10, 70);
+        tft.print("Restarting in 5s...");
+        delay(5000);
+        clearCredentials();
+        ESP.restart();
+    }
+
+    Serial.println("Connected to WiFi");
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_GREEN);
+    tft.setTextSize(2);
+    tft.setCursor(20, 40);
+    tft.print("WiFi OK!");
+
+    // NTP
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(1);
+    tft.setCursor(20, 80);
+    tft.print("Syncing time...");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+    time_t now = 0;
+    int ntpRetries = 0;
+    while (now < 1000000000 && ntpRetries < 10)
+    {
+        delay(500);
+        time(&now);
+        ntpRetries++;
+    }
+    ntpSynced = (now >= 1000000000);
+
+    tft.setCursor(20, 100);
+    tft.print("Loading data...");
+    delay(800);
+
+    if (authenticateToDexcom() && loginToDexcom())
+    {
+        fetchGlucoseData();
+    }
+    else
+    {
+        Serial.println("Dexcom login failed");
+        tft.fillScreen(ST77XX_BLACK);
+        tft.setTextColor(ST77XX_RED);
+        tft.setTextSize(2);
+        tft.setCursor(10, 30);
+        tft.print("Dexcom Fail!");
+        tft.setTextColor(ST77XX_WHITE);
+        tft.setTextSize(1);
+        tft.setCursor(10, 70);
+        tft.print("Check credentials");
+        tft.setCursor(10, 90);
+        tft.print("Restarting in 5s...");
+        delay(5000);
+        clearCredentials();
+        ESP.restart();
+    }
+}
+
+// ==================== LOOP ====================
+void loop()
+{
+    static unsigned long lastFetchTime = 0;
+    static unsigned long lastWiFiCheckTime = 0;
+    unsigned long nowMs = millis();
+
+    if (nowMs - lastWiFiCheckTime >= 300000UL)
+    {
+        checkWiFiConnection();
+        lastWiFiCheckTime = nowMs;
+    }
+
+    if (nowMs - lastFetchTime < MIN_FETCH_INTERVAL_MS)
+        return;
+
+    bool shouldFetch = false;
+    if (lastReadingTimestamp == 0)
+    {
+        shouldFetch = true;
+    }
+    else if (ntpSynced)
+    {
+        time_t currentTime;
+        time(&currentTime);
+        time_t nextReadingExpected = lastReadingTimestamp + READING_INTERVAL_SEC;
+        shouldFetch = (currentTime >= nextReadingExpected + FETCH_BUFFER_SEC);
+    }
+    else
+    {
+        static unsigned long lastSuccessfulFetchMs = 0;
+        if (lastSuccessfulFetchMs == 0)
+            lastSuccessfulFetchMs = nowMs;
+        unsigned long elapsedMs = nowMs - lastSuccessfulFetchMs;
+        shouldFetch = (elapsedMs >= (READING_INTERVAL_SEC + FETCH_BUFFER_SEC) * 1000UL);
+        if (shouldFetch)
+            lastSuccessfulFetchMs = nowMs;
+    }
+
+    if (shouldFetch)
+    {
+        fetchGlucoseData();
+        lastFetchTime = nowMs;
+    }
+}
+
+// ==================== DEXCOM API ====================
+bool authenticateToDexcom()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return false;
+    if (storedDexcomUsername.length() == 0 || storedDexcomPassword.length() == 0)
+        return false;
+
+    HTTPClient http;
+    http.setTimeout(8000);
+    http.begin(dexcomAuthenticateURL);
+    http.addHeader("Content-Type", "application/json");
+
+    String payload = "{\"accountName\":\"" + storedDexcomUsername + "\",\"password\":\"" + storedDexcomPassword + "\",\"applicationId\":\"" + String(applicationId) + "\"}";
+    int code = http.POST(payload);
+
+    if (code == HTTP_CODE_OK)
+    {
+        accountId = http.getString();
+        accountId.replace("\"", "");
+        http.end();
+        return true;
+    }
+    http.end();
+    return false;
+}
+
+bool loginToDexcom()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return false;
+
+    HTTPClient http;
+    http.setTimeout(8000);
+    http.begin(dexcomLoginURL);
+    http.addHeader("Content-Type", "application/json");
+
+    String payload = "{\"accountId\":\"" + accountId + "\",\"password\":\"" + storedDexcomPassword + "\",\"applicationId\":\"" + String(applicationId) + "\"}";
+    int code = http.POST(payload);
+
+    if (code == HTTP_CODE_OK)
+    {
+        sessionId = http.getString();
+        sessionId.replace("\"", "");
+        sessionStartMs = millis();
+        http.end();
+        return true;
+    }
+    http.end();
+    return false;
+}
+
+bool refreshSession()
+{
+    sessionId = "";
+    if (!authenticateToDexcom())
+        return false;
+    return loginToDexcom();
+}
+
+void fetchGlucoseData()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return;
+
+    if (sessionId == "" || (millis() - sessionStartMs) >= SESSION_REFRESH_MS)
+    {
+        if (!refreshSession())
+        {
+            Serial.println("Session refresh failed");
+            return;
+        }
+    }
+
+    bool attemptedRefresh = false;
+RETRY_FETCH:
+    if (sessionId == "")
+        return;
+
+    HTTPClient http;
+    http.setTimeout(8000);
+    http.begin(dexcomDataURL);
+    http.addHeader("Content-Type", "application/json");
+
+    String fetchPayload = "{\"sessionId\":\"" + sessionId + "\",\"minutes\":360,\"maxCount\":120}";
+    int httpCode = http.POST(fetchPayload);
+    String payload = (httpCode > 0) ? http.getString() : "";
+    http.end();
+
+    bool bodyInvalid = payload.indexOf("SessionNotValid") != -1 || payload.indexOf("SessionId") != -1;
+
+    if (httpCode == HTTP_CODE_OK && !bodyInvalid)
+    {
+        DynamicJsonDocument doc(24576);
+        DeserializationError err = deserializeJson(doc, payload);
+
+        if (!err && doc.size() >= 2)
+        {
+            current_glucose_mgdl = doc[0]["Value"];
+            glucose_mmol = current_glucose_mgdl / 18.0;
+            trend = String(doc[0]["Trend"]);
+            timestamp = formatTimestamp(doc[0]["DT"]);
+
+            time_t newReadingTimestamp = extractUnixTime(doc[0]["DT"]);
+            if (newReadingTimestamp != lastReadingTimestamp)
+                lastReadingTimestamp = newReadingTimestamp;
+
+            graphCount = min((int)doc.size(), GRAPH_POINTS);
+            for (int i = 0; i < graphCount; i++)
+            {
+                int srcIdx = graphCount - 1 - i;
+                graphReadings[i] = doc[srcIdx]["Value"];
+                graphTimestamps[i] = extractUnixTime(doc[srcIdx]["DT"]);
+            }
+
+            time_t timeDiffSeconds = 0;
+            int prevIndex = findBestPreviousReading(doc, timeDiffSeconds);
+            if (prevIndex > 0 && timeDiffSeconds > 0)
+            {
+                previous_glucose_mgdl = doc[prevIndex]["Value"];
+                float rawDiff = current_glucose_mgdl - previous_glucose_mgdl;
+                if (timeDiffSeconds >= 180 && timeDiffSeconds <= 600)
+                    glucose_diff = rawDiff * 300.0 / timeDiffSeconds;
+                else
+                    glucose_diff = rawDiff;
+                validDiff = true;
+            }
+            else
+            {
+                glucose_diff = 0;
+                validDiff = false;
+            }
+
+            updateDisplay();
+            return;
+        }
+        else
+        {
+            Serial.print("JSON parse error: ");
+            Serial.println(err.c_str());
+            return;
+        }
+    }
+    else
+    {
+        if (!attemptedRefresh && (httpCode == 401 || httpCode == 403 || httpCode >= 500 || bodyInvalid))
+        {
+            Serial.printf("Session expired (code %d). Refreshing...\n", httpCode);
+            attemptedRefresh = true;
+            if (refreshSession())
+                goto RETRY_FETCH;
+        }
+        else
+        {
+            Serial.printf("HTTP error: %d\n", httpCode);
+        }
+    }
+}
+
+int findBestPreviousReading(DynamicJsonDocument &doc, time_t &timeDiffSeconds)
+{
+    if (doc.size() < 2)
+        return -1;
+
+    time_t currentTime = extractUnixTime(doc[0]["DT"]);
+    const time_t TARGET_DIFF = 300;
+    const time_t MAX_AGE = 900;
+
+    int bestIndex = -1;
+    time_t bestDiff = MAX_AGE + 1;
+
+    int maxIndex = min((int)doc.size() - 1, 5);
+    for (int i = 1; i <= maxIndex; i++)
+    {
+        time_t readingTime = extractUnixTime(doc[i]["DT"]);
+        time_t diff = currentTime - readingTime;
+        if (diff <= 0 || diff > MAX_AGE)
+            continue;
+
+        time_t distanceFromTarget = abs(diff - TARGET_DIFF);
+        if (distanceFromTarget < bestDiff)
+        {
+            bestDiff = distanceFromTarget;
+            bestIndex = i;
+            timeDiffSeconds = diff;
+        }
+    }
+    return bestIndex;
+}
+
+time_t extractUnixTime(String rawTime)
+{
+    if (rawTime.startsWith("Date("))
+    {
+        int startPos = 5;
+        int dashPos = rawTime.indexOf('-', startPos);
+        if (dashPos == -1)
+            dashPos = rawTime.indexOf('+', startPos);
+        if (dashPos > startPos)
+        {
+            String timestampStr = rawTime.substring(startPos, dashPos);
+            return strtoull(timestampStr.c_str(), NULL, 10) / 1000;
+        }
+    }
+    return 0;
+}
+
+String formatTimestamp(String rawTime)
+{
+    char result[6];
+    if (rawTime.startsWith("Date("))
+    {
+        int startPos = 5;
+        int dashPos = rawTime.indexOf('-', startPos);
+        if (dashPos == -1)
+            dashPos = rawTime.indexOf('+', startPos);   // auch positives Vorzeichen beachten
+
+        int endPos = rawTime.indexOf(')', dashPos);
+
+        if (dashPos > startPos && endPos > dashPos)
+        {
+            String timestampStr = rawTime.substring(startPos, dashPos);
+            uint64_t timestamp = strtoull(timestampStr.c_str(), NULL, 10);
+
+            String tzOffsetStr = rawTime.substring(dashPos + 1, endPos);
+            int tzOffset = tzOffsetStr.toInt();
+
+            int tzHours = tzOffset / 100;
+            int tzMinutes = tzOffset % 100;
+
+            time_t seconds = timestamp / 1000;
+
+            // Bei negativem Offset abziehen, bei positivem addieren
+            if (rawTime.charAt(dashPos) == '-')
+                seconds -= (tzHours * 3600 + tzMinutes * 60);
+            else
+                seconds += (tzHours * 3600 + tzMinutes * 60);
+
+            struct tm timeInfo;
+            gmtime_r(&seconds, &timeInfo);
+
+            sprintf(result, "%02d:%02d", timeInfo.tm_hour, timeInfo.tm_min);
+            return String(result);
+        }
+    }
+    return "N/A";
+}
+
+// ==================== DRAWING ====================
+void drawDiagonalUpArrow(int x, int y, int size, uint16_t color)
+{
+    int tipX = x + size;
+    int tipY = y - size;
+    int headSize = size / 2;
+    tft.fillTriangle(tipX, tipY, tipX - headSize, tipY, tipX, tipY + headSize, color);
+    int shaftLen = size - headSize / 2;
+    for (int i = -1; i <= 1; i++)
+        tft.drawLine(x, y + i, x + shaftLen, y - shaftLen + i, color);
+}
+
+void drawDiagonalDownArrow(int x, int y, int size, uint16_t color)
+{
+    int tipX = x + size;
+    int tipY = y + size;
+    int headSize = size / 2;
+    tft.fillTriangle(tipX, tipY, tipX - headSize, tipY, tipX, tipY - headSize, color);
+    int shaftLen = size - headSize / 2;
+    for (int i = -1; i <= 1; i++)
+        tft.drawLine(x, y + i, x + shaftLen, y + shaftLen + i, color);
+}
+
+void drawGraph()
+{
+    if (graphCount < 2)
+        return;
+
+    // Compact graph for 240x135
+    const int graphX = 8;
+    const int graphY = 88;
+    const int graphW = 224;
+    const int graphH = 40;
+
+    const float minGlucose = 40.0;
+    const float maxGlucose = 300.0;
+    const float glucoseRange = maxGlucose - minGlucose;
+
+    tft.drawRect(graphX, graphY, graphW, graphH, 0x7BEF);   // dunkles Grau
+
+    // Target lines 70 / 180
+    int y70 = graphY + graphH - (int)((70.0 - minGlucose) / glucoseRange * graphH);
+    int y180 = graphY + graphH - (int)((180.0 - minGlucose) / glucoseRange * graphH);
+
+    for (int x = graphX; x < graphX + graphW; x += 4)
+    {
+        tft.drawPixel(x, y70, ST77XX_BLUE);
+        tft.drawPixel(x, y180, ST77XX_RED);
+    }
+
+    time_t oldestTime = graphTimestamps[0];
+    time_t newestTime = graphTimestamps[graphCount - 1];
+    time_t timeRange = newestTime - oldestTime;
+    if (timeRange <= 0)
+        timeRange = 1;
+
+    for (int i = 1; i < graphCount; i++)
+    {
+        float val1 = constrain(graphReadings[i - 1], minGlucose, maxGlucose);
+        float val2 = constrain(graphReadings[i], minGlucose, maxGlucose);
+
+        int x1 = graphX + (int)(((graphTimestamps[i - 1] - oldestTime) * (long)graphW) / timeRange);
+        int x2 = graphX + (int)(((graphTimestamps[i] - oldestTime) * (long)graphW) / timeRange);
+        int y1 = graphY + graphH - (int)((val1 - minGlucose) / glucoseRange * graphH);
+        int y2 = graphY + graphH - (int)((val2 - minGlucose) / glucoseRange * graphH);
+
+        uint16_t lineColor = ST77XX_GREEN;
+        if (val2 > 180)
+            lineColor = ST77XX_RED;
+        else if (val2 < 70)
+            lineColor = ST77XX_BLUE;
+
+        tft.drawLine(x1, y1, x2, y2, lineColor);
+    }
+}
+
+void updateDisplay()
+{
+    tft.fillScreen(ST77XX_BLACK);
+
+    uint16_t color = ST77XX_GREEN;
+    if (current_glucose_mgdl < 60 || current_glucose_mgdl > 200)
+        color = ST77XX_RED;
+    else if (current_glucose_mgdl < 80)
+        color = ST77XX_ORANGE;
+
+    // === Großer Glukosewert (farbig) ===
+    tft.setTextColor(color);
+    tft.setTextSize(5);
+    tft.setCursor(6, 4);
+    tft.printf("%.0f", current_glucose_mgdl);
+
+    // === Delta mit Abstand zwischen Vorzeichen und Zahl ===
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(4);
+    tft.setCursor(115, 10);
+
+    if (!validDiff)
+    {
+        tft.print("--");
+    }
+    else if (glucose_diff > 0)
+    {
+        tft.print("+");
+        tft.setCursor(145, 10);
+        tft.printf("%.0f", glucose_diff);
+    }
+    else if (glucose_diff < 0)
+    {
+        tft.print("-");
+        tft.setCursor(145, 10);
+        tft.printf("%.0f", -glucose_diff);
+    }
+    else
+    {
+        tft.print("+ 0");
+    }
+
+    // === Trendpfeil (weiß) ===
+    int trendIndex = -1;
+    for (int i = 0; i < 10; i++)
+    {
+        if (trend == DEXCOM_TREND_DIRECTIONS[i])
+        {
+            trendIndex = i;
+            break;
+        }
+    }
+
+    int arrowX = 200;
+    int arrowY = 22;
+    int arrowSize = 24;
+    uint16_t arrowColor = ST77XX_WHITE;
+
+    if (trendIndex == 3)
+    {
+        drawDiagonalUpArrow(arrowX, arrowY + 12, arrowSize, arrowColor);
+    }
+    else if (trendIndex == 5)
+    {
+        drawDiagonalDownArrow(arrowX, arrowY - 8, arrowSize, arrowColor);
+    }
+    else if (trendIndex == 1)
+    {
+        tft.setTextSize(5);
+        tft.setCursor(arrowX - 10, 4);
+        tft.print("\x18\x18");
+    }
+    else if (trendIndex == 7)
+    {
+        tft.setTextSize(5);
+        tft.setCursor(arrowX - 10, 4);
+        tft.print("\x19\x19");
+    }
+    else if (trendIndex == 2)
+    {
+        tft.setTextSize(5);
+        tft.setCursor(arrowX - 4, 4);
+        tft.print("\x18");
+    }
+    else if (trendIndex == 6)
+    {
+        tft.setTextSize(5);
+        tft.setCursor(arrowX - 4, 4);
+        tft.print("\x19");
+    }
+    else if (trendIndex == 4)
+    {
+        tft.setTextSize(5);
+        tft.setCursor(arrowX - 4, 4);
+        tft.print("\x1A");
+    }
+    else
+    {
+        tft.setTextSize(3);
+        tft.setCursor(arrowX, 12);
+        tft.print("?");
+    }
+
+    // === Timestamp ===
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(10, 55);
+    tft.print(timestamp);
+
+    // Trennlinie
+    tft.drawLine(0, 82, 240, 82, 0x7BEF);
+
+    // Graph
+    drawGraph();
+}
+
+void displayWiFiStatus(bool status)
+{
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(20, 50);
+    if (status)
+        tft.print("WiFi OK");
+    else
+    {
+        tft.setTextColor(ST77XX_RED);
+        tft.print("WiFi Down");
+    }
+}
+
+void checkWiFiConnection()
+{
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("WiFi down, reconnecting...");
+        displayWiFiStatus(false);
+        WiFi.disconnect();
+        WiFi.reconnect();
+
+        unsigned long startAttemptTime = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000)
+            delay(1000);
+
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            Serial.println("Reconnected");
+            displayWiFiStatus(true);
+            delay(1500);
+            updateDisplay();
+        }
+    }
+}
