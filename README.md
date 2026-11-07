@@ -97,3 +97,8 @@ Unter dem Board steht meist „USB-SERIAL CH9102“ oder „Silicon Labs“.
 
 •	Display bleibt schwarz?
 Prüfe, ob die Bibliothek Adafruit ST7735 and ST7789 richtig installiert ist.
+________________________________________
+Start:
+
+Nach dem Start solltest du ein neues Wlan Netzwerk haben, Dexcom_Glucose oder ähnlich.
+Trage die Wlan Daten ein (nur 2.4 GHz) und die Verbindungsdaten des Dexcom Nutzers. Wähle ob du in US oder außerhalb bist, speichere und du bist fertig.
