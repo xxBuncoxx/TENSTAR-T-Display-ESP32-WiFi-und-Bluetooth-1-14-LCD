@@ -5,8 +5,12 @@ Dexcom Share API: Das Board loggt sich mit Ihren offiziellen Dexcom-Zugangsdaten
 
 Was Sie für den Start benötigen
 1.	Hardware: Ein LilyGO TTGO T-Display (entweder das klassische ESP32 V1.1 mit 1.14" Display oder das neuere T-Display-S3).
-2.	Entwicklungsumgebung: Die Arduino IDE oder VS Code mit PlatformIO.
-3.	Wichtige Software-Bibliotheken (falls Sie selbst coden):
+https://de.aliexpress.com/item/1005013520538148.html?spm=a2g0o.productlist.main.1.33031438jaXkIw&algo_pvid=4932ddee-c9a0-4b6c-935f-96894e006e7b&algo_exp_id=4932ddee-c9a0-4b6c-935f-96894e006e7b-0&pdp_ext_f=%7B%22order%22%3A%22378%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D&pdp_npi=6%40dis%21EUR%2117.43%2112.99%21%21%2119.09%2114.23%21%400b15831117940642139724512e0e3d%2112000061379616823%21sea%21DE%211863877119%21X%211%210%21n_tag%3A-29919%3Bd%3Aa4524943%3Bm03_new_user%3A-29895&curPageLogUid=HbpLsPVVfSWF&utparam-url=scene%3Asearch%7Cquery_from%3A%7Cx_object_id%3A1005013520538148%7C_p_origin_prod%3A
+oder
+https://www.amazon.de/LILYGO-T-Display-Arduino-Entwicklungsboard-CH9102F/dp/B099MPFJ9M/ref=pd_ci_mcx_mh_mcx_views_0_image?pd_rd_w=aTe0A&content-id=amzn1.sym.b2788c28-dcb0-4666-94b0-4eaab49d7bed%3Aamzn1.symc.30e3dbb4-8dd8-4bad-b7a1-a45bcdbc49b8&pf_rd_p=b2788c28-dcb0-4666-94b0-4eaab49d7bed&pf_rd_r=V9G8CM6111Z7HJ1A7CWP&pd_rd_wg=FP1aH&pd_rd_r=def61cc3-2685-43ea-a467-02e6850f114d&pd_rd_i=B099MPFJ9M&th=1
+
+3.	Entwicklungsumgebung: Die Arduino IDE oder VS Code mit PlatformIO.
+4.	Wichtige Software-Bibliotheken (falls Sie selbst coden):
 o	TFT_eSPI (für die Grafikausgabe auf dem ST7789 Display-Treiber).
 o	WiFi.h und HTTPClient.h (für die Internetverbindung und HTTPS-Abfragen an Dexcom/Nightscout).
 o	ArduinoJson (zum Verarbeiten der API-Antworten).
