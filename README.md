@@ -1,3 +1,5 @@
+![clock pic](https://s1.directupload.eu/images/261112/ateruqyx.jpg)
+
 Ein TTGO T-Display CGM-Projekt für Dexcom ist ein hervorragendes DIY-Vorhaben. Das kompakte LilyGO TTGO T-Display (basiert auf dem ESP32-Mikrocontroller mit integriertem WLAN und Bluetooth) eignet sich ideal als kleiner, energiesparender Desktop-Monitor oder als Nachtschrank-Uhr, um den aktuellen Blutzuckerwert und die Trendpfeile in Echtzeit anzuzeigen.
 Wie funktioniert das Projekt?
 Da der ESP32 über WLAN verfügt, verbindet sich das Board mit dem Internet und ruft die Daten typischerweise aus der folgenden Quelle ab:
@@ -52,38 +54,38 @@ ________________________________________
 4. Board einstellen
 Unter Werkzeuge wählst du folgende Einstellungen:
 
-Board	ESP32 Dev Module
+- Board	ESP32 Dev Module
 
-Upload Speed	921600
+- Upload Speed	921600
 
-CPU Frequency	240MHz
+- CPU Frequency	240MHz
 
-Flash Frequency	80MHz
+- Flash Frequency	80MHz
 
-Flash Mode	QIO
+- Flash Mode	QIO
 
-Flash Size	4MB (oder 16MB, je nach Board)
+- Flash Size	4MB (oder 16MB, je nach Board)
 
-Partition Scheme	Default 4MB with spiffs
+- Partition Scheme	Default 4MB with spiffs
 
-Port	Den COM-Port deines Boards
+- Port	Den COM-Port deines Boards
 ________________________________________
 
 5. Code hochladen
 
-Erstelle einen neuen Sketch (Strg + N)
+- Erstelle einen neuen Sketch (Strg + N)
 
-Lösche den kompletten Inhalt
+- Lösche den kompletten Inhalt
 
-Füge den kompletten angepassten Code ein, den ich dir gegeben habe
+- Füge den kompletten angepassten Code ein, den ich dir gegeben habe
 
-Speichere den Sketch (z. B. als Dexcom_TDisplay)
+- Speichere den Sketch (z. B. als Dexcom_TDisplay)
 
-Verbinde dein TENSTAR T-Display per USB-C
+- Verbinde dein TENSTAR T-Display per USB-C
 
-Wähle den richtigen COM-Port unter Werkzeuge → Port
+- Wähle den richtigen COM-Port unter Werkzeuge → Port
 
-Klicke auf den Upload-Button (Pfeil nach rechts)
+- Klicke auf den Upload-Button (Pfeil nach rechts)
 
 ________________________________________
 Tipps bei Problemen
