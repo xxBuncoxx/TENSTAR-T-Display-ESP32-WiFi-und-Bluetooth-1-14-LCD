@@ -1,3 +1,5 @@
+Dexcom Glucose Anzeige (Taschenformat)
+
 ![clock pic](https://s1.directupload.eu/images/261112/ateruqyx.jpg)
 
 Ein TTGO T-Display CGM-Projekt für Dexcom ist ein hervorragendes DIY-Vorhaben. Das kompakte LilyGO TTGO T-Display (basiert auf dem ESP32-Mikrocontroller mit integriertem WLAN und Bluetooth) eignet sich ideal als kleiner, energiesparender Desktop-Monitor oder als Nachtschrank-Uhr, um den aktuellen Blutzuckerwert und die Trendpfeile in Echtzeit anzuzeigen.
@@ -15,13 +17,16 @@ Was Sie für den Start benötigen
 
 o	TFT_eSPI (für die Grafikausgabe auf dem ST7789 Display-Treiber).
 
-o	WiFi.h und HTTPClient.h (für die Internetverbindung und HTTPS-Abfragen an Dexcom/Nightscout).
+o	WiFi.h und HTTPClient.h (für die Internetverbindung und HTTPS-Abfragen an Dexcom).
 
 o	ArduinoJson (zum Verarbeiten der API-Antworten).
 
 ________________________________________
 
-Für das klassische TTGO T-Display (ESP32 mit dem kleinen 1.14 Zoll Bildschirm und dem ST7789-Treiber) lässt sich ein CGM-Monitor fantastisch umsetzen. Dank der integrierten Tasten und des kompakten Formfaktors hast du im Handumdrehen eine unauffällige Blutzuckeruhr.
+Für das klassische TTGO T-Display (ESP32 mit dem kleinen 1.14 Zoll Bildschirm und dem ST7789-Treiber) lässt sich ein CGM-Monitor fantastisch umsetzen. Dank der integrierten Tasten und des kompakten Formfaktors hast du im Handumdrehen eine unauffällige Blutzuckeruhr, die sogar noch portabel ist. Entweder über Batterie oder Kabel.
+
+Sollte sie unterwegs genutzt werden, kann als Wlan auch ein Hotspot im Handy eingetragen werden.
+Gehäuse kann natürlich auch dafür gedruckt werden: https://cults3d.com/de/modell-3d/gadget/ttgo-esp32-case?srsltid=AYCX9vLiLz4CnxPaoygCyES64urUYd7IeKwvXXKCi4HRabTNUpVcy_wj
 
 ________________________________________
 
