@@ -26,8 +26,7 @@ ________________________________________
 Für das klassische TTGO T-Display (ESP32 mit dem kleinen 1.14 Zoll Bildschirm und dem ST7789-Treiber) lässt sich ein CGM-Monitor fantastisch umsetzen. Dank der integrierten Tasten und des kompakten Formfaktors hast du im Handumdrehen eine unauffällige Blutzuckeruhr, die sogar noch portabel ist. Entweder über Batterie oder Kabel.
 
 Sollte sie unterwegs genutzt werden, kann als Wlan auch ein Hotspot im Handy eingetragen werden.
-Gehäuse kann natürlich auch dafür gedruckt werden: https://cults3d.com/de/modell-3d/gadget/ttgo-esp32-case?srsltid=AYCX9vLiLz4CnxPaoygCyES64urUYd7IeKwvXXKCi4HRabTNUpVcy_wj
-
+Gehäuse kann natürlich auch dafür gedruckt werden: (https://makerworld.com/de/models/964377-esp32s3-t-display-case#profileId-934623)
 ________________________________________
 
 
